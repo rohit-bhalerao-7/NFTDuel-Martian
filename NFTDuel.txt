@@ -1,0 +1,148 @@
+module NFTduel::game {
+
+  use aptos_framework::account;
+  //  use std::string::String;
+  use aptos_framework::timestamp;
+  use std::string::{Self, String};
+  use aptos_framework::coin::{Self, Coin, BurnCapability, FreezeCapability, MintCapability};
+
+    use std::signer;
+
+  struct Card has store {
+    id: u64, 
+    power: u64,
+    multiplier: u64, 
+    name: String,
+    description: String,
+  }
+
+  struct DuelToken has store {}
+
+  struct Duel has store {
+    id: u64,
+    player: address,
+    opponent: address, 
+    wager: u64,
+    player_card: Card,
+    opponent_card: Card
+  }
+
+  struct Leaderboard has key {
+    wins: Map<address, u64>  
+  }
+
+  struct DuelHistory has key {
+    entries: Vector<DuelHistoryEntry>
+  }
+
+  struct DuelHistoryEntry has store {
+    id: u64,
+    player: address,
+    opponent: address, 
+    winner: address,
+    wager: u64
+  }
+
+  public fun initialize(account: &signer) {
+    let _ = account::create_resource_account(account);
+    move_to(account, Leaderboard { wins: Map {} });
+    move_to(account, DuelHistory { entries: Vector {} });
+  }
+
+  public entry fun mint_card(account: &signer, name: String, description: String) acquires Card {
+    let id = get_card_id() + 1;
+    move_to(account, Card {
+      id,
+      power: random_u64(),
+      multiplier: random_u64(),
+      name, 
+      description
+    });
+  }
+
+  public entry fun start_duel(
+    player1: &signer, 
+    player2: address, 
+    wager: u64,
+    card1: Card
+  ) acquires Duel {
+    let id = get_duel_id() + 1;
+
+    move_to(player1, Duel {
+      id,
+      player: signer::address_of(player1),
+      opponent: player2,
+      wager,
+      player_card: card1, 
+      opponent_card: Card { /* placeholder */ }  
+    });
+  }
+
+  public entry fun accept_duel(
+    player2: &signer,
+    duel_id: u64,
+    card2: Card
+  ) acquires Duel {
+    let duel = borrow_global_mut<Duel>(duel_id);
+    // Additional validation
+
+    duel.opponent_card = card2; 
+
+    let winner = settle_duel(&mut duel);
+
+    save_duel_result(winner, duel);
+
+    //delete duel;
+  }
+
+  fun settle_duel(duel: &mut Duel): address {
+    let player1_power = duel.player_card.power * duel.player_card.multiplier;
+    let player2_power = duel.opponent_card.power * duel.opponent_card.multiplier;
+
+    if (player1_power > player2_power) {
+      return duel.player;
+    } else {
+      return duel.opponent; 
+    }
+  }
+
+  fun save_duel_result(winner: address, duel: Duel) {
+    add_win(winner);
+    log_duel(duel, winner);    
+  }
+
+  fun add_win(winner: address) acquires Leaderboard {
+    let leaderboard = borrow_global_mut<Leaderboard>(@duel);
+    let count = leaderboard.wins.borrow_mut(winner);
+    if (count.exists()) {
+      *count.unwrap() = count.unwrap() + 1;  
+    } else {
+      leaderboard.wins.add(winner, 1);
+    }
+  }
+
+  fun log_duel(duel: Duel, winner: address) acquires DuelHistory {
+    let history = borrow_global_mut<DuelHistory>(@duel);
+    history.entries.push(DuelHistoryEntry {
+      id: history.entries.length,
+      player: duel.player,
+      opponent: duel.opponent,
+      winner,
+      wager: duel.wager  
+    });
+  }
+
+  // Helper functions
+
+  fun random_u64(): u64 {
+    return timestamp::now_microseconds() % 1000000; 
+  }
+
+  fun get_card_id(): u64 acquires Card {
+    return Card.size() - 1;
+  }
+
+  fun get_duel_id(): u64 acquires Duel {
+    return Duel.size() - 1; 
+  }
+}
